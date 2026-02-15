@@ -509,6 +509,42 @@
                             </label>
                             <input type="range" id="vignetteSlider" min="0" max="100" value="0">
                         </div>
+
+                        <div class="slider-control">
+                            <label>
+                                Highlights Recovery
+                                <span class="slider-value" id="highlightsValue">0</span>
+                            </label>
+                            <input type="range" id="highlightsSlider" min="0" max="100" value="0">
+                        </div>
+
+                        <div class="slider-control">
+                            <label>
+                                Shadows Lift
+                                <span class="slider-value" id="shadowsValue">0</span>
+                            </label>
+                            <input type="range" id="shadowsSlider" min="0" max="100" value="0">
+                        </div>
+
+                        <div class="slider-control">
+                            <label>
+                                Noise Reduction
+                                <span class="slider-value" id="noiseValue">0</span>
+                            </label>
+                            <input type="range" id="noiseSlider" min="0" max="100" value="0">
+                        </div>
+
+                        <div class="slider-control">
+                            <label>
+                                Before/After Slider
+                                <span class="slider-value" id="compareValue">100</span>
+                            </label>
+                            <input type="range" id="compareSlider" min="0" max="100" value="100">
+                        </div>
+
+                        <div class="tool-group">
+                            <button class="btn btn-primary" id="autoEnhanceBtn">✨ Auto Enhance</button>
+                        </div>
                     </div>
 
                     <div class="tools-section">
@@ -620,6 +656,10 @@
                 sharpen: 0,
                 glow: 0,
                 vignette: 0,
+                highlights: 0,
+                shadows: 0,
+                noiseReduction: 0,
+                compareSplit: 100,
                 portraitBlur: false,
                 filter: 'none'
             };
@@ -677,6 +717,10 @@
             document.getElementById('saturationSlider').addEventListener('input', updateSaturation);
             document.getElementById('exposureSlider').addEventListener('input', updateExposure);
             document.getElementById('vignetteSlider').addEventListener('input', updateVignette);
+            document.getElementById('highlightsSlider').addEventListener('input', updateHighlights);
+            document.getElementById('shadowsSlider').addEventListener('input', updateShadows);
+            document.getElementById('noiseSlider').addEventListener('input', updateNoiseReduction);
+            document.getElementById('compareSlider').addEventListener('input', updateCompareSplit);
 
             document.querySelectorAll('.filter-btn').forEach(btn => {
                 btn.addEventListener('click', function() {
@@ -693,6 +737,7 @@
             document.getElementById('addWatermarkBtn').addEventListener('click', addWatermark);
             document.getElementById('resetBtn').addEventListener('click', resetAll);
             document.getElementById('downloadBtn').addEventListener('click', downloadImage);
+            document.getElementById('autoEnhanceBtn').addEventListener('click', autoEnhance);
 
             document.querySelectorAll('.preset-btn').forEach(btn => {
                 btn.addEventListener('click', function() {
@@ -859,6 +904,30 @@
             queueApplyAllFilters();
         }
 
+        function updateHighlights(e) {
+            filters.highlights = parseInt(e.target.value, 10);
+            document.getElementById('highlightsValue').textContent = filters.highlights;
+            queueApplyAllFilters();
+        }
+
+        function updateShadows(e) {
+            filters.shadows = parseInt(e.target.value, 10);
+            document.getElementById('shadowsValue').textContent = filters.shadows;
+            queueApplyAllFilters();
+        }
+
+        function updateNoiseReduction(e) {
+            filters.noiseReduction = parseInt(e.target.value, 10);
+            document.getElementById('noiseValue').textContent = filters.noiseReduction;
+            queueApplyAllFilters();
+        }
+
+        function updateCompareSplit(e) {
+            filters.compareSplit = parseInt(e.target.value, 10);
+            document.getElementById('compareValue').textContent = filters.compareSplit;
+            queueApplyAllFilters();
+        }
+
         function applyAllFilters() {
             if (!originalImage) return;
 
@@ -895,6 +964,21 @@
                 g = gray + (g - gray) * satFactor;
                 b = gray + (b - gray) * satFactor;
 
+                // Highlights recovery + shadows lift
+                const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                if (filters.shadows > 0 && luminance < 130) {
+                    const shadowFactor = (1 - (luminance / 130)) * (filters.shadows / 100) * 72;
+                    r += shadowFactor;
+                    g += shadowFactor;
+                    b += shadowFactor;
+                }
+                if (filters.highlights > 0 && luminance > 125) {
+                    const highlightFactor = ((luminance - 125) / 130) * (filters.highlights / 100) * 72;
+                    r -= highlightFactor;
+                    g -= highlightFactor;
+                    b -= highlightFactor;
+                }
+
                 data[i] = Math.max(0, Math.min(255, r));
                 data[i + 1] = Math.max(0, Math.min(255, g));
                 data[i + 2] = Math.max(0, Math.min(255, b));
@@ -912,6 +996,10 @@
                 imageData = applyGlowEffect(imageData, filters.glow / 100);
             }
 
+            if (filters.noiseReduction > 0) {
+                imageData = applyNoiseReduction(imageData, filters.noiseReduction / 100);
+            }
+
             ctx.putImageData(imageData, 0, 0);
 
             if (filters.vignette > 0) {
@@ -923,6 +1011,10 @@
             }
 
             applyOverlays();
+
+            if (filters.compareSplit < 100) {
+                drawBeforeAfterPreview(filters.compareSplit / 100);
+            }
         }
 
         function applyPresetFilter(data) {
@@ -1075,6 +1167,121 @@
             
             ctx.fillStyle = gradient;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function applyNoiseReduction(imageData, intensity) {
+            const pixels = imageData.data;
+            const width = imageData.width;
+            const height = imageData.height;
+            const output = new Uint8ClampedArray(pixels);
+            const blend = Math.min(0.75, intensity * 0.8);
+
+            for (let y = 1; y < height - 1; y++) {
+                for (let x = 1; x < width - 1; x++) {
+                    const idx = (y * width + x) * 4;
+                    for (let c = 0; c < 3; c++) {
+                        let sum = 0;
+                        let count = 0;
+                        for (let ky = -1; ky <= 1; ky++) {
+                            for (let kx = -1; kx <= 1; kx++) {
+                                const nIdx = ((y + ky) * width + (x + kx)) * 4 + c;
+                                sum += pixels[nIdx];
+                                count++;
+                            }
+                        }
+                        const avg = sum / count;
+                        output[idx + c] = pixels[idx + c] * (1 - blend) + avg * blend;
+                    }
+                }
+            }
+
+            return new ImageData(output, width, height);
+        }
+
+        function drawBeforeAfterPreview(splitRatio) {
+            const splitX = Math.max(0, Math.min(canvas.width, Math.round(canvas.width * splitRatio)));
+            if (splitX <= 0) {
+                ctx.drawImage(originalImage, 0, 0, canvas.width, canvas.height);
+            } else {
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(0, 0, splitX, canvas.height);
+                ctx.clip();
+                ctx.drawImage(originalImage, 0, 0, canvas.width, canvas.height);
+                ctx.restore();
+            }
+
+            ctx.save();
+            ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(splitX, 0);
+            ctx.lineTo(splitX, canvas.height);
+            ctx.stroke();
+            ctx.fillStyle = 'rgba(0,0,0,0.45)';
+            ctx.fillRect(Math.max(0, splitX - 42), 8, 84, 22);
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 11px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('Before | After', splitX, 23);
+            ctx.restore();
+        }
+
+        function autoEnhance() {
+            if (!originalImage) {
+                setStatus('Upload a photo first.', true);
+                return;
+            }
+
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = canvas.width;
+            tempCanvas.height = canvas.height;
+            const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+            tempCtx.drawImage(originalImage, 0, 0, canvas.width, canvas.height);
+            const data = tempCtx.getImageData(0, 0, canvas.width, canvas.height).data;
+
+            let lumaSum = 0;
+            let satSum = 0;
+            let pxCount = 0;
+
+            for (let i = 0; i < data.length; i += 4) {
+                const r = data[i];
+                const g = data[i + 1];
+                const b = data[i + 2];
+                const max = Math.max(r, g, b);
+                const min = Math.min(r, g, b);
+                const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+                lumaSum += luma;
+                satSum += max === 0 ? 0 : ((max - min) / max) * 100;
+                pxCount++;
+            }
+
+            const avgLuma = lumaSum / pxCount;
+            const avgSat = satSum / pxCount;
+
+            filters.exposure = Math.max(-25, Math.min(25, Math.round((128 - avgLuma) * 0.4)));
+            filters.contrast = Math.max(90, Math.min(130, Math.round(108 + (120 - avgLuma) * 0.12)));
+            filters.saturation = Math.max(90, Math.min(130, Math.round(108 + (55 - avgSat) * 0.35)));
+            filters.highlights = Math.max(8, Math.min(42, Math.round((avgLuma - 120) * 0.55 + 18)));
+            filters.shadows = Math.max(8, Math.min(42, Math.round((120 - avgLuma) * 0.55 + 18)));
+            filters.noiseReduction = Math.max(0, Math.min(35, Math.round((70 - avgSat) * 0.3)));
+
+            document.getElementById('exposureSlider').value = filters.exposure;
+            document.getElementById('contrastSlider').value = filters.contrast;
+            document.getElementById('saturationSlider').value = filters.saturation;
+            document.getElementById('highlightsSlider').value = filters.highlights;
+            document.getElementById('shadowsSlider').value = filters.shadows;
+            document.getElementById('noiseSlider').value = filters.noiseReduction;
+
+            document.getElementById('exposureValue').textContent = filters.exposure;
+            document.getElementById('contrastValue').textContent = filters.contrast;
+            document.getElementById('saturationValue').textContent = filters.saturation;
+            document.getElementById('highlightsValue').textContent = filters.highlights;
+            document.getElementById('shadowsValue').textContent = filters.shadows;
+            document.getElementById('noiseValue').textContent = filters.noiseReduction;
+
+            queueApplyAllFilters();
+            setStatus('Auto Enhance applied. Fine-tune sliders if needed.');
         }
 
         function applyPortraitBlur() {
@@ -1233,6 +1440,10 @@
             document.getElementById('saturationSlider').value = 100;
             document.getElementById('exposureSlider').value = 0;
             document.getElementById('vignetteSlider').value = 0;
+            document.getElementById('highlightsSlider').value = 0;
+            document.getElementById('shadowsSlider').value = 0;
+            document.getElementById('noiseSlider').value = 0;
+            document.getElementById('compareSlider').value = 100;
 
             document.getElementById('smoothValue').textContent = '0';
             document.getElementById('brightenValue').textContent = '0';
@@ -1242,6 +1453,10 @@
             document.getElementById('saturationValue').textContent = '100';
             document.getElementById('exposureValue').textContent = '0';
             document.getElementById('vignetteValue').textContent = '0';
+            document.getElementById('highlightsValue').textContent = '0';
+            document.getElementById('shadowsValue').textContent = '0';
+            document.getElementById('noiseValue').textContent = '0';
+            document.getElementById('compareValue').textContent = '100';
 
             document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
             document.querySelector('[data-filter="none"]').classList.add('active');
@@ -1264,10 +1479,17 @@
                 setStatus('Upload a photo before downloading.', true);
                 return;
             }
+            const previousCompare = filters.compareSplit;
+            filters.compareSplit = 100;
+            applyAllFilters();
             const link = document.createElement('a');
             link.download = `omog-edited-${Date.now()}.png`;
             link.href = canvas.toDataURL('image/png');
             link.click();
+            filters.compareSplit = previousCompare;
+            document.getElementById('compareSlider').value = previousCompare;
+            document.getElementById('compareValue').textContent = previousCompare;
+            queueApplyAllFilters();
             setStatus('Download started.');
         }
     </script>
